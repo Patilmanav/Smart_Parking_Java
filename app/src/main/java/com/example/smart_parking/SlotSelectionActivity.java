@@ -20,6 +20,7 @@ import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
 import com.example.smart_parking.Model.Vehicle;
+import com.google.firebase.firestore.DocumentSnapshot;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
 import com.razorpay.Checkout;
@@ -140,43 +141,51 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
             params.setMargins(8, 8, 8, 8);
             slotButton.setLayoutParams(params);
 
-            // Check if slot is booked
+            // Add real-time listener for slot status
             String slotId = locationId + "_slot" + slotNumber;
-            db.collection("slots").document(slotId)
-                .get()
-                .addOnSuccessListener(documentSnapshot -> {
-                    if (documentSnapshot.exists()) {
-                        boolean isBooked = documentSnapshot.getBoolean("isBooked");
-                        if (isBooked) {
-                            slotButton.setBackgroundResource(R.drawable.slot_booked);
-                            slotButton.setEnabled(false);
-                        }
+            db.collection("parking_slots")
+                .document(slotId)
+                .addSnapshotListener((documentSnapshot, e) -> {
+                    if (e != null) {
+                        Log.e(TAG, "Error listening to slot status", e);
+                        return;
                     }
-                });
 
-            slotButton.setOnClickListener(v -> {
-                // Handle slot selection
-                showVehicleSelectionDialog(slotNumber);
-            });
-
-            slotsContainer.addView(slotButton);
-        }
-    }
-
-    private void checkBookingStatus(Button btn) {
-        String slotId = btn.getText().toString();
-        int slotNumber = Integer.parseInt(slotId.split("Slot ")[1]); // Extract slot number from "Slot X"
-        
-        db.collection("parking_slots").document(slotId).get()
-                .addOnSuccessListener(documentSnapshot -> {
-                    if (documentSnapshot.exists()) {
+                    if (documentSnapshot != null && documentSnapshot.exists()) {
                         String status = documentSnapshot.getString("booking_status");
-                        if ("Booked".equals(status)) {
-                            showError("This slot is already booked");
-                        } else if ("Processing".equals(status)) {
-                            showError("This slot is currently being processed");
-                        } else {
-                            showVehicleSelectionDialog(slotNumber);
+                        String username = documentSnapshot.getString("username");
+                        if (status != null) {
+                            switch (status) {
+                                case "Booked":
+                                    slotButton.setBackgroundResource(R.drawable.slot_booked);
+                                    if (username != null && username.equals(MainActivity.log_username)) {
+                                        // If slot is booked by current user, show unpark button
+                                        slotButton.setText("Unpark Vehicle");
+                                        slotButton.setEnabled(true);
+                                        slotButton.setOnClickListener(v -> showUnparkDialog(slotNumber, documentSnapshot));
+                                    } else {
+                                        slotButton.setEnabled(false);
+                                        slotButton.setText("Slot " + slotNumber);
+                                        slotButton.setOnClickListener(v -> showError("This slot is booked by another user"));
+                                    }
+                                    break;
+                                case "Processing":
+                                    slotButton.setBackgroundResource(R.drawable.slot_processing);
+                                    slotButton.setEnabled(false);
+                                    slotButton.setText("Slot " + slotNumber);
+                                    break;
+                                case "Available":
+                                    slotButton.setBackgroundResource(R.drawable.slot_available);
+                                    slotButton.setEnabled(true);
+                                    slotButton.setText("Slot " + slotNumber);
+                                    slotButton.setOnClickListener(v -> showVehicleSelectionDialog(slotNumber));
+                                    break;
+                                default:
+                                    slotButton.setBackgroundResource(R.drawable.slot_available);
+                                    slotButton.setEnabled(true);
+                                    slotButton.setText("Slot " + slotNumber);
+                                    slotButton.setOnClickListener(v -> showVehicleSelectionDialog(slotNumber));
+                            }
                         }
                     } else {
                         // If document doesn't exist, create it with initial status
@@ -184,10 +193,226 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
                         data.put("booking_status", "Available");
                         data.put("locationId", locationId);
                         data.put("slotNumber", slotNumber);
-                        db.collection("parking_slots").document(slotId).set(data)
-                            .addOnSuccessListener(aVoid -> showVehicleSelectionDialog(slotNumber));
+                        db.collection("parking_slots")
+                            .document(slotId)
+                            .set(data);
+                        slotButton.setBackgroundResource(R.drawable.slot_available);
+                        slotButton.setEnabled(true);
+                        slotButton.setText("Slot " + slotNumber);
+                        slotButton.setOnClickListener(v -> showVehicleSelectionDialog(slotNumber));
                     }
                 });
+
+            slotsContainer.addView(slotButton);
+        }
+    }
+
+    private void showUnparkDialog(int slotNumber, DocumentSnapshot documentSnapshot) {
+        long bookingTime = documentSnapshot.getLong("booking_time");
+        int bookedHours = documentSnapshot.getLong("hours").intValue();
+        double bookedAmount = documentSnapshot.getDouble("amount");
+        
+        // Calculate actual parking duration
+        long currentTime = System.currentTimeMillis();
+        long actualDurationMillis = currentTime - bookingTime;
+        double actualHours = actualDurationMillis / (1000.0 * 60 * 60);
+        
+        // Calculate charges
+        double actualAmount = actualHours * hourlyRateValue;
+        double extraAmount = Math.max(0, actualAmount - bookedAmount);
+        
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this);
+        dialog.setTitle("Unpark Vehicle")
+            .setMessage(String.format("Parking Duration: %.1f hours\n" +
+                    "Booked Hours: %d\n" +
+                    "Extra Hours: %.1f\n" +
+                    "Extra Amount: ₹%.2f", 
+                    actualHours, bookedHours, Math.max(0, actualHours - bookedHours), extraAmount))
+            .setPositiveButton("Pay & Unpark", (dialogInterface, i) -> {
+                if (extraAmount > 0) {
+                    // If there are extra charges, initiate payment
+                    initiateUnparkPayment(slotNumber, extraAmount, actualHours);
+                } else {
+                    // If no extra charges, just unpark
+                    unparkVehicle(slotNumber, actualHours);
+                }
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void initiateUnparkPayment(int slotNumber, double amount, double actualHours) {
+        try {
+            JSONObject options = new JSONObject();
+
+            options.put("name", "Smart Parking");
+            options.put("description", "Extra Parking Charges");
+            options.put("currency", "INR");
+            options.put("amount", (int)(amount * 100)); // Amount in paise
+            options.put("theme.color", "#3399cc");
+            options.put("prefill.email", MainActivity.log_username + "@example.com");
+            options.put("prefill.contact", "9999999999");
+            options.put("prefill.name", MainActivity.log_username);
+
+            JSONObject retryObj = new JSONObject();
+            retryObj.put("enabled", true);
+            retryObj.put("max_count", 4);
+            options.put("retry", retryObj);
+
+            // Store unpark details for callback
+            currentSlotNumber = slotNumber;
+            currentHours = (int) actualHours;
+            currentTotalAmount = amount;
+
+            Checkout checkout = new Checkout();
+            checkout.setImage(R.drawable.ic_launcher_foreground);
+            checkout.open(this, options);
+
+        } catch(Exception e) {
+            Log.e(TAG, "Error in starting Razorpay Checkout", e);
+            showError("Payment initialization failed. Please try again.");
+        }
+    }
+
+    private void unparkVehicle(int slotNumber, double actualHours) {
+        String slotId = locationId + "_slot" + slotNumber;
+        
+        Map<String, Object> data = new HashMap<>();
+        data.put("booking_status", "Available");
+        data.put("username", null);
+        data.put("vehicle_number", null);
+        data.put("booking_time", null);
+        data.put("hours", null);
+        data.put("amount", null);
+        data.put("locationId", locationId);
+        data.put("slotNumber", slotNumber);
+        data.put("actual_hours", actualHours);
+        data.put("unpark_time", System.currentTimeMillis());
+
+        db.collection("parking_slots")
+            .document(slotId)
+            .set(data)
+            .addOnSuccessListener(aVoid -> {
+                showSuccessDialog("Vehicle unparked successfully!");
+            })
+            .addOnFailureListener(e -> showErrorDialog("Failed to unpark vehicle: " + e.getMessage()));
+    }
+
+    @Override
+    public void onPaymentSuccess(String razorpayPaymentID) {
+        if (currentTotalAmount > 0) {
+            // This is an unpark payment
+            String slotId = locationId + "_slot" + currentSlotNumber;
+            
+            Map<String, Object> data = new HashMap<>();
+            data.put("booking_status", "Available");
+            data.put("username", null);
+            data.put("vehicle_number", null);
+            data.put("booking_time", null);
+            data.put("hours", null);
+            data.put("amount", null);
+            data.put("locationId", locationId);
+            data.put("slotNumber", currentSlotNumber);
+            data.put("actual_hours", currentHours);
+            data.put("unpark_time", System.currentTimeMillis());
+            data.put("extra_payment_id", razorpayPaymentID);
+            data.put("extra_amount", currentTotalAmount);
+
+            db.collection("parking_slots")
+                .document(slotId)
+                .set(data)
+                .addOnSuccessListener(aVoid -> {
+                    showSuccessDialog("Extra charges paid and vehicle unparked successfully!");
+                })
+                .addOnFailureListener(e -> showErrorDialog("Failed to update unpark status: " + e.getMessage()));
+        } else {
+            // This is a booking payment (existing code)
+            String slotId = locationId + "_slot" + currentSlotNumber;
+            
+            Map<String, Object> bookingData = new HashMap<>();
+            bookingData.put("booking_status", "Booked");
+            bookingData.put("username", MainActivity.log_username);
+            bookingData.put("hours", currentHours);
+            bookingData.put("amount", currentTotalAmount);
+            bookingData.put("booking_time", System.currentTimeMillis());
+            bookingData.put("locationId", locationId);
+            bookingData.put("slotNumber", currentSlotNumber);
+            bookingData.put("payment_status", "Completed");
+            bookingData.put("razorpay_payment_id", razorpayPaymentID);
+
+            db.collection("parking_slots")
+                .document(slotId)
+                .set(bookingData)
+                .addOnSuccessListener(aVoid -> {
+                    Button slotButton = findViewById(currentSlotNumber);
+                    if (slotButton != null) {
+                        slotButton.setBackgroundResource(R.drawable.slot_booked);
+                        slotButton.setEnabled(false);
+                    }
+                    showSuccessDialog("Payment successful! Your slot has been booked.");
+                    userLastBookingTime.put(MainActivity.log_username, System.currentTimeMillis());
+                })
+                .addOnFailureListener(e -> showErrorDialog("Failed to update booking status: " + e.getMessage()));
+        }
+    }
+
+    @Override
+    public void onPaymentError(int code, String response) {
+        // Payment failed or cancelled
+        String slotId = locationId + "_slot" + currentSlotNumber;
+        
+        Map<String, Object> resetData = new HashMap<>();
+        resetData.put("booking_status", "Available");
+        resetData.put("username", null);
+        resetData.put("vehicle_number", null);
+        resetData.put("timestamp", null);
+        resetData.put("locationId", locationId);
+        resetData.put("slotNumber", currentSlotNumber);
+        resetData.put("payment_status", "Failed");
+
+        // Reset Firestore slot status
+        db.collection("parking_slots")
+                .document(slotId)
+                .set(resetData)
+                .addOnSuccessListener(aVoid -> {
+                    // Update UI
+                    Button slotButton = findViewById(currentSlotNumber);
+                    if (slotButton != null) {
+                        slotButton.setBackgroundResource(R.drawable.slot_available);
+                    }
+                    showErrorDialog("Payment failed or cancelled. Please try again.");
+                })
+                .addOnFailureListener(e -> showErrorDialog("Failed to reset slot status: " + e.getMessage()));
+    }
+
+    /**
+     * Show a success dialog.
+     */
+    private void showSuccessDialog(String message) {
+        new AlertDialog.Builder(this)
+                .setTitle("Success")
+                .setMessage(message)
+                .setPositiveButton("OK", (dialog, which) -> dialog.dismiss())
+                .show();
+    }
+
+    /**
+     * Show an error dialog.
+     */
+    private void showErrorDialog(String message) {
+        new AlertDialog.Builder(this)
+                .setTitle("Error")
+                .setMessage(message)
+                .setPositiveButton("OK", (dialog, which) -> dialog.dismiss())
+                .show();
+    }
+
+    private void showError(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    private void showSuccess(String message) {
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 
     private void showVehicleSelectionDialog(int slotNumber) {
@@ -301,6 +526,7 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
                 }
 
                 double totalAmount = hours * hourlyRateValue;
+                Adialog.dismiss();
                 initiatePayment(slotNumber, hours, totalAmount);
             } catch (NumberFormatException e) {
                 showError("Please enter a valid number of hours");
@@ -364,97 +590,5 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
             Log.e(TAG, "Error in starting Razorpay Checkout", e);
             showError("Payment initialization failed. Please try again.");
         }
-    }
-
-    @Override
-    public void onPaymentSuccess(String razorpayPaymentID) {
-        // Payment successful
-        String slotId = locationId + "_slot" + currentSlotNumber;
-        
-        Map<String, Object> bookingData = new HashMap<>();
-        bookingData.put("booking_status", "Booked");
-        bookingData.put("username", MainActivity.log_username);
-        bookingData.put("hours", currentHours);
-        bookingData.put("amount", currentTotalAmount);
-        bookingData.put("booking_time", System.currentTimeMillis());
-        bookingData.put("locationId", locationId);
-        bookingData.put("slotNumber", currentSlotNumber);
-        bookingData.put("payment_status", "Completed");
-        bookingData.put("razorpay_payment_id", razorpayPaymentID);
-
-        // Update Firestore
-        db.collection("parking_slots")
-                .document(slotId)
-                .set(bookingData)
-                .addOnSuccessListener(aVoid -> {
-                    // Update UI
-                    Button slotButton = findViewById(currentSlotNumber);
-                    if (slotButton != null) {
-                        slotButton.setBackgroundResource(R.drawable.slot_booked);
-                        slotButton.setEnabled(false);
-                    }
-                    showSuccessDialog("Payment successful! Your slot has been booked.");
-                    userLastBookingTime.put(MainActivity.log_username, System.currentTimeMillis());
-                })
-                .addOnFailureListener(e -> showErrorDialog("Failed to update booking status: " + e.getMessage()));
-    }
-
-    @Override
-    public void onPaymentError(int code, String response) {
-        // Payment failed or cancelled
-        String slotId = locationId + "_slot" + currentSlotNumber;
-        
-        Map<String, Object> resetData = new HashMap<>();
-        resetData.put("booking_status", "Available");
-        resetData.put("username", null);
-        resetData.put("vehicle_number", null);
-        resetData.put("timestamp", null);
-        resetData.put("locationId", locationId);
-        resetData.put("slotNumber", currentSlotNumber);
-        resetData.put("payment_status", "Failed");
-
-        // Reset Firestore slot status
-        db.collection("parking_slots")
-                .document(slotId)
-                .set(resetData)
-                .addOnSuccessListener(aVoid -> {
-                    // Update UI
-                    Button slotButton = findViewById(currentSlotNumber);
-                    if (slotButton != null) {
-                        slotButton.setBackgroundResource(R.drawable.slot_available);
-                    }
-                    showErrorDialog("Payment failed or cancelled. Please try again.");
-                })
-                .addOnFailureListener(e -> showErrorDialog("Failed to reset slot status: " + e.getMessage()));
-    }
-
-    /**
-     * Show a success dialog.
-     */
-    private void showSuccessDialog(String message) {
-        new AlertDialog.Builder(this)
-                .setTitle("Success")
-                .setMessage(message)
-                .setPositiveButton("OK", (dialog, which) -> dialog.dismiss())
-                .show();
-    }
-
-    /**
-     * Show an error dialog.
-     */
-    private void showErrorDialog(String message) {
-        new AlertDialog.Builder(this)
-                .setTitle("Error")
-                .setMessage(message)
-                .setPositiveButton("OK", (dialog, which) -> dialog.dismiss())
-                .show();
-    }
-
-    private void showError(String message) {
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-    }
-
-    private void showSuccess(String message) {
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 }
