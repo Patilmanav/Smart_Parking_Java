@@ -119,7 +119,7 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
 
     private void loadSlots(int totalSlots) {
         slotsContainer.removeAllViews();
-        
+
         // Calculate number of rows needed
         int numRows = (totalSlots + 1) / 2; // Round up division
         slotsContainer.setRowCount(numRows);
@@ -146,64 +146,78 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
             // Add real-time listener for slot status
             String slotId = locationId + "_slot" + slotNumber;
             db.collection("parking_slots")
-                .document(slotId)
-                .addSnapshotListener((documentSnapshot, e) -> {
-                    if (e != null) {
-                        Log.e(TAG, "Error listening to slot status", e);
-                        return;
-                    }
-
-                    if (documentSnapshot != null && documentSnapshot.exists()) {
-                        String status = documentSnapshot.getString("booking_status");
-                        String username = documentSnapshot.getString("username");
-                        if (status != null) {
-                            switch (status) {
-                                case "Booked":
-                                    slotButton.setBackgroundResource(R.drawable.slot_booked);
-                                    if (username != null && username.equals(MainActivity.log_username)) {
-                                        // If slot is booked by current user, show unpark button
-                                        slotButton.setText("Unpark Vehicle");
-                                        slotButton.setEnabled(true);
-                                        slotButton.setOnClickListener(v -> showUnparkDialog(slotNumber, documentSnapshot));
-                                    } else {
-                                        slotButton.setEnabled(false);
-                                        slotButton.setText("Slot " + slotNumber);
-                                        slotButton.setOnClickListener(v -> showError("This slot is booked by another user"));
-                                    }
-                                    break;
-                                case "Processing":
-                                    slotButton.setBackgroundResource(R.drawable.slot_processing);
-                                    slotButton.setEnabled(false);
-                                    slotButton.setText("Slot " + slotNumber);
-                                    break;
-                                case "Available":
-                                    slotButton.setBackgroundResource(R.drawable.slot_available);
-                                    slotButton.setEnabled(true);
-                                    slotButton.setText("Slot " + slotNumber);
-                                    slotButton.setOnClickListener(v -> showVehicleSelectionDialog(slotNumber));
-                                    break;
-                                default:
-                                    slotButton.setBackgroundResource(R.drawable.slot_available);
-                                    slotButton.setEnabled(true);
-                                    slotButton.setText("Slot " + slotNumber);
-                                    slotButton.setOnClickListener(v -> showVehicleSelectionDialog(slotNumber));
-                            }
+                    .document(slotId)
+                    .addSnapshotListener((documentSnapshot, e) -> {
+                        if (e != null) {
+                            Log.e(TAG, "Error listening to slot status", e);
+                            return;
                         }
-                    } else {
-                        // If document doesn't exist, create it with initial status
-                        Map<String, Object> data = new HashMap<>();
-                        data.put("booking_status", "Available");
-                        data.put("locationId", locationId);
-                        data.put("slotNumber", slotNumber);
-                        db.collection("parking_slots")
-                            .document(slotId)
-                            .set(data);
-                        slotButton.setBackgroundResource(R.drawable.slot_available);
-                        slotButton.setEnabled(true);
-                        slotButton.setText("Slot " + slotNumber);
-                        slotButton.setOnClickListener(v -> showVehicleSelectionDialog(slotNumber));
-                    }
-                });
+
+                        if (documentSnapshot != null && documentSnapshot.exists()) {
+                            String status = documentSnapshot.getString("booking_status");
+                            String username = documentSnapshot.getString("username");
+                            if (status != null) {
+                                switch (status) {
+                                    case "Booked":
+                                        slotButton.setBackgroundResource(R.drawable.slot_booked);
+                                        if (username != null && username.equals(MainActivity.log_username)) {
+                                            // If slot is booked by current user, show unpark button
+                                            slotButton.setText("Unpark Vehicle");
+                                            slotButton.setEnabled(true);
+                                            slotButton.setOnClickListener(v -> showUnparkDialog(slotNumber, documentSnapshot));
+                                        } else {
+                                            slotButton.setEnabled(false);
+                                            slotButton.setText("Slot " + slotNumber);
+                                            slotButton.setOnClickListener(v -> showError("This slot is booked by another user"));
+                                        }
+                                        break;
+                                    case "Processing":
+                                        slotButton.setBackgroundResource(R.drawable.slot_processing);
+                                        if (username != null && username.equals(MainActivity.log_username)) {
+                                            // If slot is in processing state and belongs to current user
+                                            slotButton.setText("Continue Booking");
+                                            slotButton.setEnabled(true);
+                                            slotButton.setOnClickListener(v -> showDurationSelectionDialog(slotNumber));
+                                        } else {
+                                            slotButton.setEnabled(false);
+                                            slotButton.setText("Slot " + slotNumber);
+                                            slotButton.setOnClickListener(v -> showError("This slot is being processed by another user"));
+                                        }
+                                        break;
+                                    case "Reserved":
+                                        slotButton.setBackgroundResource(R.drawable.slot_reserved);
+                                        slotButton.setEnabled(false);
+                                        slotButton.setText("Reserved");
+                                        slotButton.setOnClickListener(v -> showError("This slot is reserved by admin"));
+                                        break;
+                                    case "Available":
+                                        slotButton.setBackgroundResource(R.drawable.slot_available);
+                                        slotButton.setEnabled(true);
+                                        slotButton.setText("Slot " + slotNumber);
+                                        slotButton.setOnClickListener(v -> showVehicleSelectionDialog(slotNumber));
+                                        break;
+                                    default:
+                                        slotButton.setBackgroundResource(R.drawable.slot_available);
+                                        slotButton.setEnabled(true);
+                                        slotButton.setText("Slot " + slotNumber);
+                                        slotButton.setOnClickListener(v -> showVehicleSelectionDialog(slotNumber));
+                                }
+                            }
+                        } else {
+                            // If document doesn't exist, create it with initial status
+                            Map<String, Object> data = new HashMap<>();
+                            data.put("booking_status", "Available");
+                            data.put("locationId", locationId);
+                            data.put("slotNumber", slotNumber);
+                            db.collection("parking_slots")
+                                    .document(slotId)
+                                    .set(data);
+                            slotButton.setBackgroundResource(R.drawable.slot_available);
+                            slotButton.setEnabled(true);
+                            slotButton.setText("Slot " + slotNumber);
+                            slotButton.setOnClickListener(v -> showVehicleSelectionDialog(slotNumber));
+                        }
+                    });
 
             slotsContainer.addView(slotButton);
         }
@@ -213,34 +227,34 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
         long bookingTime = documentSnapshot.getLong("booking_time");
         int bookedHours = documentSnapshot.getLong("hours").intValue();
         double bookedAmount = documentSnapshot.getDouble("amount");
-        
+
         // Calculate actual parking duration
         long currentTime = System.currentTimeMillis();
         long actualDurationMillis = currentTime - bookingTime;
         double actualHours = actualDurationMillis / (1000.0 * 60 * 60);
-        
+
         // Calculate charges
         double actualAmount = actualHours * hourlyRateValue;
         double extraAmount = Math.max(0, actualAmount - bookedAmount);
-        
+
         AlertDialog.Builder dialog = new AlertDialog.Builder(this);
         dialog.setTitle("Unpark Vehicle")
-            .setMessage(String.format("Parking Duration: %.1f hours\n" +
-                    "Booked Hours: %d\n" +
-                    "Extra Hours: %.1f\n" +
-                    "Extra Amount: ₹%.2f", 
-                    actualHours, bookedHours, Math.max(0, actualHours - bookedHours), extraAmount))
-            .setPositiveButton("Pay & Unpark", (dialogInterface, i) -> {
-                if (extraAmount > 0) {
-                    // If there are extra charges, initiate payment
-                    initiateUnparkPayment(slotNumber, extraAmount, actualHours);
-                } else {
-                    // If no extra charges, just unpark
-                    unparkVehicle(slotNumber, actualHours);
-                }
-            })
-            .setNegativeButton("Cancel", null)
-            .show();
+                .setMessage(String.format("Parking Duration: %.1f hours\n" +
+                                "Booked Hours: %d\n" +
+                                "Extra Hours: %.1f\n" +
+                                "Extra Amount: ₹%.2f",
+                        actualHours, bookedHours, Math.max(0, actualHours - bookedHours), extraAmount))
+                .setPositiveButton("Pay & Unpark", (dialogInterface, i) -> {
+                    if (extraAmount > 0) {
+                        // If there are extra charges, initiate payment
+                        initiateUnparkPayment(slotNumber, extraAmount, actualHours);
+                    } else {
+                        // If no extra charges, just unpark
+                        unparkVehicle(slotNumber, actualHours);
+                    }
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
     }
 
     private void initiateUnparkPayment(int slotNumber, double amount, double actualHours) {
@@ -281,7 +295,7 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
 
     private void unparkVehicle(int slotNumber, double actualHours) {
         String slotId = locationId + "_slot" + slotNumber;
-        
+
         Map<String, Object> data = new HashMap<>();
         data.put("booking_status", "Available");
         data.put("username", null);
@@ -295,12 +309,12 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
         data.put("unpark_time", System.currentTimeMillis());
 
         db.collection("parking_slots")
-            .document(slotId)
-            .set(data)
-            .addOnSuccessListener(aVoid -> {
-                showSuccessDialog("Vehicle unparked successfully!");
-            })
-            .addOnFailureListener(e -> showErrorDialog("Failed to unpark vehicle: " + e.getMessage()));
+                .document(slotId)
+                .set(data)
+                .addOnSuccessListener(aVoid -> {
+                    showSuccessDialog("Vehicle unparked successfully!");
+                })
+                .addOnFailureListener(e -> showErrorDialog("Failed to unpark vehicle: " + e.getMessage()));
     }
 
     @Override
@@ -309,7 +323,7 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
         if (isUnpark) {
             // This is an unpark payment
             String slotId = locationId + "_slot" + currentSlotNumber;
-            
+
             Map<String, Object> data = new HashMap<>();
             data.put("booking_status", "Available");
             data.put("username", null);
@@ -325,16 +339,16 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
             data.put("extra_amount", currentTotalAmount);
 
             db.collection("parking_slots")
-                .document(slotId)
-                .set(data)
-                .addOnSuccessListener(aVoid -> {
-                    showSuccessDialog("Extra charges paid and vehicle unparked successfully!");
-                })
-                .addOnFailureListener(e -> showErrorDialog("Failed to update unpark status: " + e.getMessage()));
+                    .document(slotId)
+                    .set(data)
+                    .addOnSuccessListener(aVoid -> {
+                        showSuccessDialog("Extra charges paid and vehicle unparked successfully!");
+                    })
+                    .addOnFailureListener(e -> showErrorDialog("Failed to update unpark status: " + e.getMessage()));
         } else {
             // This is a booking payment (existing code)
             String slotId = locationId + "_slot" + currentSlotNumber;
-            
+
             Map<String, Object> bookingData = new HashMap<>();
             bookingData.put("booking_status", "Booked");
             bookingData.put("username", MainActivity.log_username);
@@ -347,18 +361,18 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
             bookingData.put("razorpay_payment_id", razorpayPaymentID);
 
             db.collection("parking_slots")
-                .document(slotId)
-                .set(bookingData)
-                .addOnSuccessListener(aVoid -> {
-                    Button slotButton = findViewById(currentSlotNumber);
-                    if (slotButton != null) {
-                        slotButton.setBackgroundResource(R.drawable.slot_booked);
-                        slotButton.setEnabled(false);
-                    }
-                    showSuccessDialog("Payment successful! Your slot has been booked.");
-                    userLastBookingTime.put(MainActivity.log_username, System.currentTimeMillis());
-                })
-                .addOnFailureListener(e -> showErrorDialog("Failed to update booking status: " + e.getMessage()));
+                    .document(slotId)
+                    .set(bookingData)
+                    .addOnSuccessListener(aVoid -> {
+                        Button slotButton = findViewById(currentSlotNumber);
+                        if (slotButton != null) {
+                            slotButton.setBackgroundResource(R.drawable.slot_booked);
+                            slotButton.setEnabled(false);
+                        }
+                        showSuccessDialog("Payment successful! Your slot has been booked.");
+                        userLastBookingTime.put(MainActivity.log_username, System.currentTimeMillis());
+                    })
+                    .addOnFailureListener(e -> showErrorDialog("Failed to update booking status: " + e.getMessage()));
         }
     }
 
@@ -366,7 +380,7 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
     public void onPaymentError(int code, String response) {
         // Payment failed or cancelled
         String slotId = locationId + "_slot" + currentSlotNumber;
-        
+
         Map<String, Object> resetData = new HashMap<>();
         resetData.put("booking_status", "Available");
         resetData.put("username", null);
@@ -447,16 +461,16 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
         vehicleSpinner.setAdapter(adapter);
 
         db.collection("users")
-            .document(MainActivity.log_username)
-            .collection("vehicles")
-            .get()
-            .addOnSuccessListener(queryDocumentSnapshots -> {
-                for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
-                    Vehicle vehicle = document.toObject(Vehicle.class);
-                    vehicleNumbers.add(vehicle.getVehicleNumber());
-                }
-                adapter.notifyDataSetChanged();
-            });
+                .document(MainActivity.log_username)
+                .collection("vehicles")
+                .get()
+                .addOnSuccessListener(queryDocumentSnapshots -> {
+                    for (QueryDocumentSnapshot document : queryDocumentSnapshots) {
+                        Vehicle vehicle = document.toObject(Vehicle.class);
+                        vehicleNumbers.add(vehicle.getVehicleNumber());
+                    }
+                    adapter.notifyDataSetChanged();
+                });
 
         confirmButton.setOnClickListener(v -> {
             String selectedVehicle = vehicleSpinner.getSelectedItem().toString();
@@ -472,17 +486,17 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
 
                 String slotId = locationId + "_slot" + slotNumber;
                 db.collection("parking_slots")
-                    .document(slotId)
-                    .set(data)
-                    .addOnSuccessListener(aVoid -> {
-                        // Update button appearance
-                        Button slotButton = findViewById(slotNumber);
-                        if (slotButton != null) {
-                            slotButton.setBackgroundResource(R.drawable.slot_processing);
-                        }
-                        Adialog.dismiss();
-                        showDurationSelectionDialog(slotNumber);
-                    });
+                        .document(slotId)
+                        .set(data)
+                        .addOnSuccessListener(aVoid -> {
+                            // Update button appearance
+                            Button slotButton = findViewById(slotNumber);
+                            if (slotButton != null) {
+                                slotButton.setBackgroundResource(R.drawable.slot_processing);
+                            }
+                            Adialog.dismiss();
+                            showDurationSelectionDialog(slotNumber);
+                        });
             }
         });
 
@@ -519,9 +533,9 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
                     totalAmountText.setText(String.format("Total Amount: ₹%.2f", totalAmount));
                 } catch (NumberFormatException e) {
                     totalAmountText.setText("Total Amount: ₹0.00");
-                }
-            }
-        });
+                        }
+                    }
+                });
 
         payButton.setOnClickListener(v -> {
             try {
@@ -549,11 +563,11 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
             data.put("timestamp", null);
             data.put("locationId", locationId);
             data.put("slotNumber", slotNumber);
-            
+
             db.collection("parking_slots")
-                .document(slotId)
-                .set(data);
-            
+                    .document(slotId)
+                    .set(data);
+
             // Update button appearance
             Button slotButton = findViewById(slotNumber);
             if (slotButton != null) {

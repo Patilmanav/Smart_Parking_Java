@@ -8,6 +8,8 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.GridLayout;
+import android.widget.GridView;
 import android.widget.ListView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
@@ -18,7 +20,9 @@ import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.firestore.QueryDocumentSnapshot;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class AdminActivity extends AppCompatActivity {
     private static final String TAG = "AdminActivity";
@@ -113,6 +117,7 @@ public class AdminActivity extends AppCompatActivity {
         EditText rateInput = dialogView.findViewById(R.id.hourlyRate);
         EditText mapsLinkInput = dialogView.findViewById(R.id.mapsLink);
         Button actionButton = dialogView.findViewById(R.id.addButton);
+        Button manageSlotsButton = dialogView.findViewById(R.id.manageSlots);
         Button cancelButton = dialogView.findViewById(R.id.cancelButton);
 
         // Set dialog title and button text based on whether we're adding or editing
@@ -132,6 +137,14 @@ public class AdminActivity extends AppCompatActivity {
 
         // Set hint for rate input to indicate INR
         rateInput.setHint("Hourly Rate (₹)");
+
+        manageSlotsButton.setOnClickListener(v -> {
+            if (existingLocation != null) {
+                showManageSlotsDialog(existingLocation);
+            } else {
+                Toast.makeText(this, "Please save location first", Toast.LENGTH_SHORT).show();
+            }
+        });
 
         AlertDialog alertDialog = dialog.create();
         alertDialog.show();
@@ -193,6 +206,127 @@ public class AdminActivity extends AppCompatActivity {
         });
 
         cancelButton.setOnClickListener(v -> alertDialog.dismiss());
+    }
+
+    private void showManageSlotsDialog(ParkingLocation location) {
+        AlertDialog.Builder dialog = new AlertDialog.Builder(this);
+        LayoutInflater inflater = getLayoutInflater();
+        View dialogView = inflater.inflate(R.layout.dialog_manage_slots, null);
+        dialog.setView(dialogView);
+
+        GridLayout slotsContainer = dialogView.findViewById(R.id.slotsContainer);
+        Button closeButton = dialogView.findViewById(R.id.closeButton);
+
+        // Calculate number of rows needed
+        int totalSlots = location.getTotalSlots();
+        int numRows = (totalSlots + 1) / 2; // Round up division
+        slotsContainer.setRowCount(numRows);
+
+        for (int i = 1; i <= totalSlots; i++) {
+            final int slotNumber = i;
+            Button slotButton = new Button(this);
+            slotButton.setId(slotNumber);
+            slotButton.setText("Slot " + slotNumber);
+            slotButton.setTextSize(16);
+            slotButton.setPadding(16, 16, 16, 16);
+
+            // Set layout parameters for grid
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams();
+            params.width = 0;
+            params.height = GridLayout.LayoutParams.WRAP_CONTENT;
+            params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
+            params.rowSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
+            params.setMargins(8, 8, 8, 8);
+            slotButton.setLayoutParams(params);
+
+            // Add real-time listener for slot status
+            String slotId = location.getLocationId() + "_slot" + slotNumber;
+            db.collection("parking_slots")
+                .document(slotId)
+                .addSnapshotListener((documentSnapshot, e) -> {
+                    if (documentSnapshot != null && documentSnapshot.exists()) {
+                        String status = documentSnapshot.getString("booking_status");
+                        updateSlotButtonAppearance(slotButton, status);
+                    }
+                });
+
+            // Add long click listener for admin actions
+            slotButton.setOnLongClickListener(v -> {
+                showSlotActionDialog(location.getLocationId(), slotNumber);
+                return true;
+            });
+
+            slotsContainer.addView(slotButton);
+        }
+
+        AlertDialog alertDialog = dialog.create();
+        closeButton.setOnClickListener(v -> alertDialog.dismiss());
+        alertDialog.show();
+    }
+
+    private void updateSlotButtonAppearance(Button button, String status) {
+        switch (status) {
+            case "Available":
+                button.setBackgroundResource(R.drawable.slot_available);
+                break;
+            case "Reserved":
+                button.setBackgroundResource(R.drawable.slot_reserved);
+                break;
+            case "Booked":
+                button.setBackgroundResource(R.drawable.slot_booked);
+                break;
+            case "Processing":
+                button.setBackgroundResource(R.drawable.slot_processing);
+                break;
+            default:
+                button.setBackgroundResource(R.drawable.slot_available);
+        }
+    }
+
+    private void showSlotActionDialog(String locationId, int slotNumber) {
+        String[] options = {"Make Available", "Reserve Slot", "Cancel"};
+        
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle("Manage Slot " + slotNumber)
+               .setItems(options, (dialog, which) -> {
+                   String slotId = locationId + "_slot" + slotNumber;
+                   Map<String, Object> data = new HashMap<>();
+                   
+                   switch (which) {
+                       case 0: // Make Available
+                           data.put("booking_status", "Available");
+                           data.put("username", null);
+                           data.put("vehicle_number", null);
+                           data.put("timestamp", null);
+                           updateSlotStatus(slotId, data, "Slot made available");
+                           break;
+                           
+                       case 1: // Reserve Slot
+                           data.put("booking_status", "Reserved");
+                           data.put("username", "admin");
+                           data.put("timestamp", System.currentTimeMillis());
+                           updateSlotStatus(slotId, data, "Slot reserved");
+                           break;
+                           
+                       case 2: // Cancel
+                           dialog.dismiss();
+                           break;
+                   }
+               });
+        
+        builder.show();
+    }
+
+    private void updateSlotStatus(String slotId, Map<String, Object> data, String successMessage) {
+        db.collection("parking_slots")
+            .document(slotId)
+            .set(data)
+            .addOnSuccessListener(aVoid -> {
+                Toast.makeText(this, successMessage, Toast.LENGTH_SHORT).show();
+            })
+            .addOnFailureListener(e -> {
+                Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+            });
     }
 
 }

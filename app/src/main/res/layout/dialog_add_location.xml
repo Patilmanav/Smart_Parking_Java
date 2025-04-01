@@ -50,21 +50,30 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:gravity="end">
-
-        <Button
-            android:id="@+id/cancelButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Cancel"
-            android:layout_marginEnd="8dp"/>
+        android:layout_marginBottom="8dp">
 
         <Button
             android:id="@+id/addButton"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:text="Add Location"/>
+            android:layout_weight="1"
+            android:text="Add Location"
+            android:layout_marginEnd="8dp"/>
+
+        <Button
+            android:id="@+id/manageSlots"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Manage Slots"
+            android:layout_marginStart="8dp"/>
 
     </LinearLayout>
+
+    <Button
+        android:id="@+id/cancelButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Cancel"/>
 
 </LinearLayout> 
