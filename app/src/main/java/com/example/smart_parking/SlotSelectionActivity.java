@@ -50,6 +50,7 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
     private int currentSlotNumber;
     private int currentHours;
     private double currentTotalAmount;
+    private boolean isUnpark;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -61,6 +62,7 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
         Checkout checkout = new Checkout();
         checkout.setKeyID("rzp_test_f8lIskfQfhBNJA"); // Replace with your actual key
 
+        isUnpark = false;
         // Initialize Firestore
         db = FirebaseFirestore.getInstance();
 
@@ -243,6 +245,9 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
 
     private void initiateUnparkPayment(int slotNumber, double amount, double actualHours) {
         try {
+            Log.d("Payment","Initiating UnPark Payment");
+
+            isUnpark = true;
             JSONObject options = new JSONObject();
 
             options.put("name", "Smart Parking");
@@ -300,7 +305,8 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
 
     @Override
     public void onPaymentSuccess(String razorpayPaymentID) {
-        if (currentTotalAmount > 0) {
+        Log.d("ISUNPARK","is unpark: "+isUnpark);
+        if (isUnpark) {
             // This is an unpark payment
             String slotId = locationId + "_slot" + currentSlotNumber;
             
@@ -566,6 +572,8 @@ public class SlotSelectionActivity extends AppCompatActivity implements PaymentR
         currentTotalAmount = totalAmount;
 
         try {
+            Log.d("Payment","Initiating Payment");
+            isUnpark = false;
             JSONObject options = new JSONObject();
 
             options.put("name", "Smart Parking");
